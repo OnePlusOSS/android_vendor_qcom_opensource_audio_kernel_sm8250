@@ -2274,6 +2274,33 @@ static int wcd938x_ldoh_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int wcd938x_st_state_get(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+				snd_soc_kcontrol_component(kcontrol);
+	struct wcd938x_priv *wcd938x = snd_soc_component_get_drvdata(component);
+
+	ucontrol->value.integer.value[0] = wcd938x->mbhc->wcd_mbhc.st_state;
+
+	return 0;
+}
+
+static int wcd938x_st_state_put(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+				snd_soc_kcontrol_component(kcontrol);
+	struct wcd938x_priv *wcd938x = snd_soc_component_get_drvdata(component);
+	bool enable = !!ucontrol->value.integer.value[0];
+
+	pr_info("%s: st state is %d\n", __func__, enable);
+
+	wcd938x_mbhc_set_st_state(wcd938x->mbhc, enable);
+
+	return 0;
+}
+
 static const char * const tx_mode_mux_text_wcd9380[] = {
 	"ADC_INVALID", "ADC_HIFI", "ADC_LO_HIF", "ADC_NORMAL", "ADC_LP",
 };
@@ -2360,6 +2387,9 @@ static const struct snd_kcontrol_new wcd938x_snd_controls[] = {
 
 	SOC_SINGLE_EXT("LDOH Enable", SND_SOC_NOPM, 0, 1, 0,
 		wcd938x_ldoh_get, wcd938x_ldoh_put),
+
+	SOC_SINGLE_EXT("ST Enable", SND_SOC_NOPM, 0, 1, 0,
+		wcd938x_st_state_get, wcd938x_st_state_put),
 
 	SOC_SINGLE_TLV("HPHL Volume", WCD938X_HPH_L_EN, 0, 20, 1, line_gain),
 	SOC_SINGLE_TLV("HPHR Volume", WCD938X_HPH_R_EN, 0, 20, 1, line_gain),

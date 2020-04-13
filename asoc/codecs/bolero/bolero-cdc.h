@@ -58,7 +58,6 @@ enum {
 enum {
 	DMIC_TX = 0,
 	DMIC_VA = 1,
-
 };
 
 enum {

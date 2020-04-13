@@ -44,6 +44,7 @@
 #define VA_MACRO_TX_DMIC_CLK_DIV_MASK 0x0E
 #define VA_MACRO_TX_DMIC_CLK_DIV_SHFT 0x01
 #define VA_MACRO_SWR_MIC_MUX_SEL_MASK 0xF
+#define VA_MACRO_ADC_MODE_CFG0_SHIFT 1
 #define VA_MACRO_ADC_MUX_CFG_OFFSET 0x8
 #define VA_MACRO_ADC_MODE_CFG0_SHIFT 1
 
@@ -55,6 +56,7 @@
 #define VA_MACRO_SWR_STRING_LEN 80
 #define VA_MACRO_CHILD_DEVICES_MAX 3
 
+static struct va_macro_priv *va_priv_golbal = NULL;
 static const DECLARE_TLV_DB_SCALE(digital_gain, 0, 1, 0);
 static int va_tx_unmute_delay = BOLERO_CDC_VA_TX_DMIC_UNMUTE_DELAY_MS;
 module_param(va_tx_unmute_delay, int, 0664);
@@ -295,7 +297,6 @@ static int va_macro_event_handler(struct snd_soc_component *component,
 				__func__);
 		break;
 	case BOLERO_MACRO_EVT_SSR_UP:
-		trace_printk("%s, enter SSR up\n", __func__);
 		/* enable&disable VA_CORE_CLK to reset GFMUX reg */
 		ret = bolero_clk_rsc_request_clock(va_priv->dev,
 						va_priv->default_clk_id,
@@ -914,7 +915,7 @@ static int va_macro_lpi_get(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_component *component =
-			snd_soc_kcontrol_component(kcontrol);
+		snd_soc_kcontrol_component(kcontrol);
 	struct device *va_dev = NULL;
 	struct va_macro_priv *va_priv = NULL;
 
@@ -930,7 +931,7 @@ static int va_macro_lpi_put(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_component *component =
-			snd_soc_kcontrol_component(kcontrol);
+		snd_soc_kcontrol_component(kcontrol);
 	struct device *va_dev = NULL;
 	struct va_macro_priv *va_priv = NULL;
 
@@ -1117,11 +1118,12 @@ static int va_macro_enable_dec(struct snd_soc_dapm_widget *w,
 		 */
 		usleep_range(6000, 6010);
 		/* schedule work queue to Remove Mute */
-		schedule_delayed_work(&va_priv->va_mute_dwork[decimator].dwork,
-				      msecs_to_jiffies(va_tx_unmute_delay));
+		queue_delayed_work(system_freezable_wq,
+				   &va_priv->va_mute_dwork[decimator].dwork,
+				   msecs_to_jiffies(va_tx_unmute_delay));
 		if (va_priv->va_hpf_work[decimator].hpf_cut_off_freq !=
 							CF_MIN_3DB_150HZ)
-			schedule_delayed_work(
+			queue_delayed_work(system_freezable_wq,
 					&va_priv->va_hpf_work[decimator].dwork,
 					msecs_to_jiffies(hpf_delay));
 		/* apply gain after decimator is enabled */
@@ -1631,6 +1633,58 @@ VA_MACRO_DAPM_ENUM_EXT(va_smic2_v3, BOLERO_CDC_VA_INP_MUX_ADC_MUX2_CFG0,
 VA_MACRO_DAPM_ENUM_EXT(va_smic3_v3, BOLERO_CDC_VA_INP_MUX_ADC_MUX3_CFG0,
 			0, smic_mux_text_v2, snd_soc_dapm_get_enum_double,
 			va_macro_put_dec_enum);
+
+static int va_macro_mic_clk_get(struct snd_kcontrol *kcontrol,
+				      struct snd_ctl_elem_value *ucontrol)
+{
+	if (!va_priv_golbal)
+		return -EINVAL;
+
+	ucontrol->value.integer.value[0] = VA_MACRO_CLK_DIV_16 - va_priv_golbal->dmic_clk_div;
+	pr_debug("%s: va mic clk = %ld\n",
+		 __func__, ucontrol->value.integer.value[0]);
+    return 0;
+}
+
+static int va_macro_mic_clk_put(struct snd_kcontrol *kcontrol,
+				      struct snd_ctl_elem_value *ucontrol)
+{
+	if (!va_priv_golbal)
+		return -EINVAL;
+
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		va_priv_golbal->dmic_clk_div = VA_MACRO_CLK_DIV_16;
+		break;
+	case 1:
+		va_priv_golbal->dmic_clk_div = VA_MACRO_CLK_DIV_8;
+		break;
+	case 2:
+		va_priv_golbal->dmic_clk_div = VA_MACRO_CLK_DIV_6;
+		break;
+	case 3:
+		va_priv_golbal->dmic_clk_div = VA_MACRO_CLK_DIV_4;
+		break;
+	case 4:
+		va_priv_golbal->dmic_clk_div = VA_MACRO_CLK_DIV_3;
+		break;
+	case 5:
+		va_priv_golbal->dmic_clk_div = VA_MACRO_CLK_DIV_2;
+		break;
+	default:
+		break;
+	}
+	pr_debug("%s: dmic_clk_div = %d\n",
+		 __func__, va_priv_golbal->dmic_clk_div);
+    return 0;
+}
+
+static const char *const mic_clk_rate_text[] = {"0P6MHZ", "1P2MHZ", "1P6MHZ", "2P4MHZ",
+	"3P2MHZ", "4P8MHZ"};
+
+static const struct soc_enum va_mic_clk_enum =
+	SOC_ENUM_SINGLE_EXT(6, mic_clk_rate_text);
+
 
 static const struct snd_kcontrol_new va_aif1_cap_mixer[] = {
 	SOC_SINGLE_EXT("DEC0", SND_SOC_NOPM, VA_MACRO_DEC0, 1, 0,
@@ -2450,6 +2504,8 @@ static const struct snd_kcontrol_new va_macro_snd_controls[] = {
 	SOC_SINGLE_SX_TLV("VA_DEC7 Volume",
 			  BOLERO_CDC_VA_TX7_TX_VOL_CTL,
 			  0, -84, 40, digital_gain),
+    SOC_ENUM_EXT("VA_mic_clk", va_mic_clk_enum,
+			va_macro_mic_clk_get, va_macro_mic_clk_put),
 	SOC_SINGLE_EXT("LPI Enable", 0, 0, 1, 0,
 		va_macro_lpi_get, va_macro_lpi_put),
 
@@ -3054,6 +3110,7 @@ static int va_macro_probe(struct platform_device *pdev)
 	}
 	va_priv->is_used_va_swr_gpio = is_used_va_swr_gpio;
 
+	va_priv_golbal = va_priv;
 	mutex_init(&va_priv->mclk_lock);
 	dev_set_drvdata(&pdev->dev, va_priv);
 	va_macro_init_ops(&ops, va_io_base, va_without_decimation);
@@ -3114,6 +3171,10 @@ static const struct of_device_id va_macro_dt_match[] = {
 };
 
 static const struct dev_pm_ops bolero_dev_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(
+		pm_runtime_force_suspend,
+		pm_runtime_force_resume
+	)
 	SET_RUNTIME_PM_OPS(
 		bolero_runtime_suspend,
 		bolero_runtime_resume,
